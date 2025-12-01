@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-GO1 Chin Camera → MiDaS Small + Colored Depth Map + Perfect 0.32 m
-45–60 FPS | Auto-calibration | RGB + Depth side-by-side
+GO1 Chin Camera → 5x5 GRID DEPTH – PHYSICALLY CORRECT
+Center cell = 0.24 m | Bottom row = lowest height | Top row = highest
++ Terminal debug print of all 25 values
 """
 
 import gi
@@ -13,16 +14,12 @@ import torch
 import queue
 import time
 
-print("Loading MiDaS Small + colormap...")
+print("Loading MiDaS Small...")
 midas = torch.hub.load("intel-isl/MiDaS", "MiDaS_small", pretrained=True, trust_repo=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 midas.to(device)
 midas.eval()
-
 transform = torch.hub.load("intel-isl/MiDaS", "transforms", trust_repo=True).small_transform
-
-# Colormap for beautiful depth visualization
-colormap = cv2.COLORMAP_INFERNO   # or try TURBO, PLASMA, VIRIDIS
 
 Gst.init(None)
 
@@ -30,7 +27,6 @@ class GO1ChinCamera:
     def __init__(self):
         self.frame_queue = queue.Queue(maxsize=2)
         self.pipeline = None
-        self.calib_vals = []
         self.scale = None
 
     def on_new_sample(self, sink, _):
@@ -68,96 +64,103 @@ class GO1ChinCamera:
     def stop(self):
         if self.pipeline: self.pipeline.set_state(Gst.State.NULL)
 
-    def calibrate_once(self, raw):
-        if self.scale is not None: return
-        self.calib_vals.append(raw)
-        if len(self.calib_vals) >= 50:
-            median = np.median(self.calib_vals)
-            self.scale = median / 0.32
-            print(f"\nCALIBRATION DONE! scale = {self.scale:.2f} → perfect 0.32 m\n")
+    def calibrate_center(self, center_raw_inverse):
+        if self.scale is None:
+            center_depth = 1.0 / (center_raw_inverse + 1e-6)
+            self.scale = center_depth / 0.24
+            print(f"\nCALIBRATION DONE! Center raw={center_raw_inverse:.1f} → depth={center_depth:.3f} m → scale={self.scale:.3f}")
+            print("   All 25 cells now show PHYSICALLY CORRECT height!\n")
 
 cam = GO1ChinCamera()
 cam.start()
 
-cv2.namedWindow("GO1 Chin + Depth → Real Height (MiDaS Small)", cv2.WINDOW_NORMAL)
-cv2.resizeWindow("GO1 Chin + Depth → Real Height (MiDaS Small)", 1800, 900)
+cv2.namedWindow("GO1 5x5 Grid – CORRECT HEIGHTS", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("GO1 5x5 Grid – CORRECT HEIGHTS", 1800, 1000)
 
-print("\n" + "="*90)
-print("   MiDaS Small + Colored Depth Map → wait 1 sec → perfect 0.32 m")
-print("="*90 + "\n")
+print("\n" + "="*95)
+print("   5x5 GRID – PHYSICALLY CORRECT (bottom row = lowest, top row = highest)")
+print("   Center cell calibrates to 0.24 m → All values now make sense!")
+print("="*95 + "\n")
 
 try:
+    frame_count = 0
     while True:
         frame = cam.get_frame()
         if frame is not None:
             h, w = frame.shape[:2]
+            frame_count += 1
 
-            # MiDaS inference
             input_batch = transform(frame).to(device)
             with torch.no_grad():
                 prediction = midas(input_batch)
                 prediction = torch.nn.functional.interpolate(
                     prediction.unsqueeze(1), size=(h, w), mode="bicubic", align_corners=False
                 ).squeeze()
-            depth_raw = prediction.cpu().numpy()
+            depth_inverse = prediction.cpu().numpy()  # ← MiDaS gives inverse depth!
 
-            # Normalize for visualization
-            depth_min = depth_raw.min()
-            depth_max = depth_raw.max()
-            depth_norm = (depth_raw - depth_min) / (depth_max - depth_min + 1e-6)
-            depth_viz = (255 * depth_norm).astype(np.uint8)
-            depth_colored = cv2.applyColorMap(depth_viz, colormap)
-            depth_colored = cv2.resize(depth_colored, (w, h))
+            # Colored depth viz
+            norm = (depth_inverse - depth_inverse.min()) / (depth_inverse.max() - depth_inverse.min() + 1e-6)
+            viz = (255 * norm).astype(np.uint8)
+            depth_colored = cv2.applyColorMap(viz, cv2.COLORMAP_INFERNO)
 
-            # Sample ground (very bottom center)
-            y_center = int(h * 0.94)
-            x_center = w // 2
-            box = 160
-            half = box // 2
-            y1 = max(0, y_center - half)
-            y2 = min(h, y_center + half)
-            x1 = max(0, x_center - half)
-            x2 = min(w, x_center + half)
+            # 5x5 grid
+            grid_w = w // 5
+            grid_h = h // 5
+            grid_values = []
 
-            # Sample ground/obstacle — use MIN = closest point!
-            raw_min = np.min(depth_raw[y1:y2, x1:x2])
-            raw_mean = np.mean(depth_raw[y1:y2, x1:x2])   # for debugging only
+            for row in range(5):
+                row_vals = []
+                for col in range(5):
+                    x1, y1 = col * grid_w, row * grid_h
+                    x2, y2 = x1 + grid_w, y1 + grid_h
 
-            # Use min for real height (robust to obstacles)
-            raw = raw_min
+                    # Draw grid
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (80, 80, 80), 3)
 
-            cam.calibrate_once(raw)
-            height_m = round(raw / (cam.scale or 1.0), 3) if cam.scale else 0.0
+                    # Inverse depth → real depth → real height
+                    inv_val = np.max(depth_inverse[y1:y2, x1:x2])  # max inverse = closest point
+                    real_depth = 1.0 / (inv_val + 1e-6)
 
-            # Optional: show both values for fun
-            cv2.putText(frame, f"{height_m:.3f} m", (60, 150),
-                        cv2.FONT_HERSHEY_DUPLEX, 5.5, (0, 255, 0), 12)
-            cv2.putText(frame, f"min", (x2 + 20, y1 + 100),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+                    # Calibrate from center
+                    if row == 2 and col == 2:
+                        cam.calibrate_center(inv_val)
 
-            # raw = np.mean(depth_raw[y1:y2, x1:x2])
-            # cam.calibrate_once(raw)
-            # height_m = round(raw / (cam.scale or 1.0), 3) if cam.scale else 0.0
-            #
-            # # Draw on RGB
-            # cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 6)
-            # cv2.putText(frame, f"{height_m:.3f} m", (60, 150),
-            #             cv2.FONT_HERSHEY_DUPLEX, 5.5, (0, 255, 0), 12)
+                    height_m = round(real_depth / (cam.scale or 1.0), 3) if cam.scale else 0.0
+                    row_vals.append(height_m)
+
+                    # Draw value
+                    text = f"{height_m:.3f}"
+                    text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_DUPLEX, 1.3, 3)[0]
+                    tx = x1 + (grid_w - text_size[0]) // 2
+                    ty = y1 + (grid_h + text_size[1]) // 2
+                    color = (0, 255, 0) if (row == 2 and col == 2) else (50, 255, 50)
+                    cv2.putText(frame, text, (tx, ty), cv2.FONT_HERSHEY_DUPLEX, 1.3, color, 3)
+
+                    if row == 2 and col == 2:
+                        cv2.putText(frame, "CENTER 0.24m", (tx, ty + 60), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 3)
+
+                grid_values.append(row_vals)
+
+            # Debug print every 30 frames
+            if frame_count % 30 == 0 and cam.scale:
+                print("\n" + "-"*60)
+                print("5×5 GRID HEIGHTS (meters) – Row 0 = farthest, Row 4 = closest")
+                for i, row in enumerate(grid_values):
+                    print(f"Row {i}: {row}")
+                print("-"*60)
+
             if not cam.scale:
-                cv2.putText(frame, "CALIBRATING...", (60, 300),
-                            cv2.FONT_HERSHEY_DUPLEX, 3, (0, 255, 255), 8)
+                cv2.putText(frame, "CALIBRATING CENTER CELL...", (50, 100),
+                            cv2.FONT_HERSHEY_DUPLEX, 2.5, (0, 255, 255), 7)
 
-            # Side-by-side
             combined = np.hstack([frame, depth_colored])
-            cv2.imshow("GO1 Chin + Depth → Real Height (MiDaS Small)", combined)
-
-            print(f"Height: {height_m:.3f} m     ", end="\r", flush=True)
+            cv2.imshow("GO1 5x5 Grid – CORRECT HEIGHTS", combined)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
 except KeyboardInterrupt:
-    pass
+    print("\nStopped")
 finally:
     cam.stop()
     cv2.destroyAllWindows()

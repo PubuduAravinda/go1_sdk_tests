@@ -70,7 +70,7 @@ while True:
     if motiontime < 2000:  # 4-second soft ramp
         phase = 1
         ramp = motiontime / 2000.0
-        Kp = 5 + 55 * ramp
+        Kp = 5 + 10 * ramp
         Kd = 0.8 + 1.2 * ramp
         use_integral = False
     else:
@@ -80,7 +80,7 @@ while True:
             wave_start_time = t
             print(f"\n*** PHASE 2 + WAVE MOTION START at t={t:.1f}s ***\n")
         ramp = 1.0
-        Kp = 60.0
+        Kp = 20.0
         Kd = 2.0
         use_integral = True
 

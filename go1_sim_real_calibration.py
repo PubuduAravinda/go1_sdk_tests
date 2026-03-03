@@ -4,12 +4,12 @@ import robot_interface as sdk
 import sys
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────────
-KP_START = 5.0
+KP_START = 10.0
 KD_FIXED = 3.0
-KP_STEP = 5.0
-RAMP_MAX_LEVEL = 10
-HOLD_SECONDS_PER_PHASE = 5.0
-SETTLE_SECONDS = 3.0
+KP_STEP = 10.0
+RAMP_MAX_LEVEL = 4
+HOLD_SECONDS_PER_PHASE = 3.0
+SETTLE_SECONDS = 1.0
 
 joint_names = ["FL_hip", "FR_hip", "RL_hip", "RR_hip", "FL_th", "FR_th", "RL_th", "RR_th", "FL_cal", "FR_cal", "RL_cal", "RR_cal"]
 
@@ -110,7 +110,7 @@ phase_error_list = []
 cycle_abs_errors = [[] for _ in range(12)]
 
 while True:
-    time.sleep(0.005)
+    time.sleep(0.002)
 
     try:
         udp.Recv()

@@ -234,6 +234,9 @@ try:
                 print(f"  target_q:            {target_q.round(3)}", flush=True)
                 print(f"  actual:              {joint_pos.round(3)}", flush=True)
 
+
+
+
         # ── 11. Maintain ~500Hz loop rate ─────────────────────────────────────
         elapsed = time.time() - t_loop_start
         sleep_t = (1.0 / CONTROL_HZ) - elapsed

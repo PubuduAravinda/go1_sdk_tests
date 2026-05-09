@@ -98,9 +98,9 @@ KNEE_SCALE  = 0.90  # was 0.8
 # Once striding, settle to 0.5 for stable locomotion.
 # Data showed 2.5s ramp re-locks into standing attractor at 0.5.
 VX_TARGET  = 0.5   # m/s — steady-state forward velocity
-VX_KICK    = 0.8   # m/s — startup kick to break standing attractor
+VX_KICK    = 0.80   # m/s — startup kick to break standing attractor
 VX_RAMP_S  = 0.3   # s   — 0 → VX_KICK ramp duration
-VX_KICK_S  = 1.0   # s   — hold VX_KICK duration
+VX_KICK_S  = 0.3   # s   — hold VX_KICK duration
 VX_SETTLE_S= 1.0   # s   — VX_KICK → VX_TARGET settle duration
 
 # Hip abduction correction applied to obs[3:6] (front hips only).
